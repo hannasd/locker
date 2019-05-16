@@ -12,7 +12,10 @@
 #include <ArduinoJson.h>
 #include <ESP8266HTTPClient.h>
 #include <ESP8266WiFi.h>
-JsonArray List;
+#include <string.h>
+// JsonArray List;
+DynamicJsonDocument doc(2048);
+JsonArray repos ;
 unsigned long timenow = 0;
 PN532_SPI pn532spi(SPI, D4);
 PN532 nfc(pn532spi);
@@ -54,10 +57,10 @@ void saveToEEPROM(uint8_t uid[][4]){
     }
   }
   EEPROM.write(512 , sizeof(uid)/sizeof(uid[0]));
-}   
+} 
 
-void toId(const char* st, uint8_t t[4]){
-    //uint8_t* uid = new uint8_t [4];
+void toId(const char st[8] , uint8_t t[4]){
+    // uint8_t* uid = new uint8_t [4];
     for (int i = 0; i < 4; ++i) {
         char xx = st[i*2];
         char yy = st[i*2 + 1];
@@ -75,26 +78,76 @@ void toId(const char* st, uint8_t t[4]){
         t[i] = x*16 + y;
     }
 }
-void jsontoarr(const JsonArray& arr){
-  size_t uidSize = arr.size();
-  Serial.print("arr.size() : ");
+
+//zero-mode in arduinoJson library:
+//input shouldn't be const or should hold the dyanamic doc alive because arduinoJson is changing the input
+//or the programm may crash after several runs
+void jsontoarr(){
+  size_t uidSize = repos.size();
+  Serial.print("repos.size() : ");
   Serial.println(uidSize);
-  //uint8_t** uid = new uint8_t*[uidSize];
-  for(int i = 0; i < arr.size(); i++){
-    toId(arr[i]["uid"].as<char*>(), temp);
-    for(int j = 0; j < 4; j++)
+  int i = 0;
+  for(JsonObject repo : repos){
+    Serial.println("Before toId.");
+    Serial.println(repos.size());
+    Serial.println(repo["uid"].as<char* >());
+    toId(repo["uid"].as<char* >(), temp);
+    Serial.println("After toId");
+    // for(int j = 0; j < 4; j++){
+    //   Serial.print("temp[");
+    //   Serial.print(j);
+    //   Serial.print("] : ");
+    //   Serial.println(temp[j]);
+    // }
+    for(int j = 0; j < 4; j++){
+      Serial.print("temp[");
+      Serial.print(j);
+      Serial.print("] : ");
+      Serial.println(temp[j]);
       cards[i][j] = temp[j];
+    }
+    i++;
+    Serial.println("cards : ");
+    for(int j = 0; j < 2; j++){
+      for (int k = 0; k < 4; ++k)
+      {
+        Serial.print(cards[j][k]);
+      }
+      Serial.println();
+    }
+
   }
-//  for(int i = 0; i <uidSize;  i++)
-//  {
-//    Serial.print("cards[i][j] : ");
-//    for(int j = 0; j < 4 ; j++)
-//    {
-//      cards[i][j] = uid[i][j];
-//      Serial.print(cards[i][j]);
-//    }
-//    Serial.println();
-//    //delete uid[i]; 
+//   for(int i = 0; i < uidSize; i++){
+//     Serial.println("Before toId.");
+//     Serial.println(repos.size());
+//     Serial.println(repos[i]["uid"].as<char* >());
+//     toId(repos[i]["uid"].as<char* >(), temp);
+//     Serial.println("After toId");
+//     for(int j = 0; j < 4; j++){
+//       Serial.print("temp[");
+//       Serial.print(j);
+//       Serial.print("] : ");
+//       Serial.println(temp[j]);
+//     }
+//     for(int j = 0; j < 4; j++){
+//       Serial.print("temp[");
+//       Serial.print(j);
+//       Serial.print("] : ");
+//       Serial.println(temp[j]);
+//       // cards[i][j] = temp[j];
+//     }
+// //     Serial.println();
+// //   }
+// // //  for(int i = 0; i <uidSize;  i++)
+// //  {
+// //    Serial.print("cards[i][j] : ");
+// //    for(int j = 0; j < 4 ; j++)
+// //    {
+// //      cards[i][j] = uid[i][j];
+// //      Serial.print(cards[i][j]);
+// //    }
+// //    Serial.println();
+// //    //delete uid[i]; 
 //  }
  // saveToEEPROM(uid);
  // delete uid;
@@ -122,17 +175,25 @@ char* toString (uint8_t uid[]){
 //    cout<<endl;
 //    return st;
 }
-void POSTLog(uint8_t uid[]  , bool accepted ){
-   char* suid = toString(uid);
-    DynamicJsonDocument doc(1024);
-   //hextoString();
-   doc["uid"] = suid;
-   doc["authented"] = accepted; 
-   serializeJson(doc, Serial);
-   JsonArray logs = doc["uid"]["authented"];
-   http.begin("");
+void POSTLog(uint8_t uid  , bool accepted ){
+   // char* suid = toString(uid);
+   //  DynamicJsonDocument doc(1024);
+   // //hextoString();
+   // doc["uid"] = suid;
+   // doc["authented"] = accepted; 
+   // serializeJson(doc, Serial);
+   // JsonArray logs = doc["uid"]["authented"];
+   // http.begin("");
     
-    http.POST(logs[0]);
+   //  http.POST(logs[0]);
+  const int capacity = JSON_OBJECT_SIZE(2);
+  StaticJsonDocument<capacity> postDoc;
+  postDoc["uid"].set(uid);
+  postDoc["accepted"].set(accepted);
+  JsonObject postObj = postDoc.to<JsonObject>();
+  http.begin("http://172.20.10.3:8000/core/entry-log/")
+  
+
   }
 
 bool isMember(int uid[]) {
@@ -156,25 +217,33 @@ bool isMember(int uid[]) {
 }
 
 
-JsonArray getListFromServer(){
-  http.begin("http://172.20.10.2:8000/core/members-list/");
+void getListFromServer(){
+  http.begin("http://172.20.10.3:8000/core/members-list/");
   int httpCode = http.GET();
   if(httpCode < 0){
     Serial.printf("Status :::: [HTTP] GET... failed, error: %s\n", http.errorToString(httpCode).c_str());
+    //Should read the list from EEPROM 
   } 
   Stream& response = http.getStream();
-  DynamicJsonDocument doc(2048);
   deserializeJson(doc, response);
-  JsonArray repos = doc.as<JsonArray>();
+  repos = doc.as<JsonArray>();
   for(JsonObject repo : repos){
-    Serial.print(" _ ");
+    // Serial.print(" _ ");
+    Serial.println(repo["uid"].as<char* >());
+     // repo =  stoi (repo["uid"],NULL,10);
+    // repo = (int) strtol(repos["uid"], (char **)NULL, 10);
+
+  }
+  for(int i = 0; i < 10; i++)
+  for(JsonObject repo : repos){
+    // Serial.print(" _ ");
     Serial.println(repo["uid"].as<char* >());
      // repo =  stoi (repo["uid"],NULL,10);
     // repo = (int) strtol(repos["uid"], (char **)NULL, 10);
 
   }
   Serial.println("END");
-  return repos; 
+  // return repos;
 }
  
  void readfromEEPROM(){
@@ -190,7 +259,7 @@ JsonArray getListFromServer(){
      }
   }
 void setup(void) {
-//  EEPROM.begin(513);
+  EEPROM.begin(513);
   Serial.begin(115200);
   Serial.println("Hello!");
 //  // lcd
@@ -240,8 +309,9 @@ void setup(void) {
 //
 //  Serial.println("Waiting for an ISO14443A card");
 
-connectToWifi("ech", "mypalang");
-jsontoarr(getListFromServer());
+connectToWifi("iPhone", "12345678987");
+getListFromServer();
+jsontoarr();
 }
 
 void loop(void) {
