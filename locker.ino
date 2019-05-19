@@ -3,32 +3,25 @@
 #include <PN532_SPI.h>
 #include <PN532.h>
 #include <EEPROM.h>
-#include <Adafruit_GFX.h>
-#include <Adafruit_SPITFT.h>
-#include <Adafruit_SPITFT_Macros.h>
 #include <gfxfont.h>
 #include <time.h>
-#include <Adafruit_SSD1306.h>
 #include <ArduinoJson.h>
 #include <ESP8266HTTPClient.h>
 #include <ESP8266WiFi.h>
 #include <string.h>
-// JsonArray List;
+#include "config.h"
+
 DynamicJsonDocument doc(2048);
 JsonArray repos ;
 unsigned long timenow = 0;
 PN532_SPI pn532spi(SPI, D2);
 PN532 nfc(pn532spi);
-Adafruit_SSD1306 display(128, 64, &Wire, D3);
-//PN532_I2C pn532i2c(Wire);
 uint8_t numberOfCards;
 uint8_t cards[30][4];
 uint8_t temp[4];
-//const int capacity = 50 * JSON_OBJECT_SIZE(1);
 int httpCodeGet = 0;
 HTTPClient http;
-const int capacity = JSON_OBJECT_SIZE(2);
-StaticJsonDocument<capacity> postDoc;
+
 void unlock() {
 
 }
@@ -48,7 +41,7 @@ void connectToWifi(String networkName, String networkPassword) {
 }
 
 void saveToEEPROM() {
-  int count = 9;
+  int count = 8; //First 8 bytes are reserved
   for (size_t i = 0; i < 30 ; i++)
   {
     for (size_t j = 0; j < 4; j++)
@@ -58,6 +51,7 @@ void saveToEEPROM() {
     }
   }
   EEPROM.write(512 , 30);
+  EEPROM.commit();
 }
 
 void toId(const char st[8] , uint8_t t[4]) {
@@ -128,17 +122,15 @@ void POSTLog(const char* uid  , bool accepted ) {
     output += "false";
   }
   output+= "}";
-  Serial.println("output : ");
-  Serial.println(output);
-  http.begin("http://172.20.10.3:8000/core/entry-log/");
+  http.begin(SERVER_ROOT LOG_URL);
   http.addHeader("Content-Type", "application/json");
-//{"uid":"123456789","approved":true}
   int httpCode = http.POST(output);
   if (httpCode < 0) {
     Serial.printf("Status :::: [HTTP] POST... failed, error: %s\n", http.errorToString(httpCode).c_str());
   }
   http.end();
 }
+
 bool isMember(uint8_t uid[]) {
   int count = 0, j = 0;
   int columnSize = sizeof(cards[0]) / sizeof(cards[0][0]);
@@ -165,43 +157,28 @@ bool isMember(uint8_t uid[]) {
   return false;
 }
 
-void getListFromServer() {
-  http.begin("http://172.20.10.3:8000/core/members-list/");
-  httpCodeGet = http.GET();
-  if (httpCodeGet < 0) {
-    Serial.printf("Status :::: [HTTP] GET... failed, error: %s\n", http.errorToString(httpCodeGet).c_str());
-    return;
+int getListFromServer() {
+  http.begin(SERVER_ROOT MEMBERSLIST_URL);
+  int httpCode = http.GET();
+  if (httpCode < 0) {
+    return httpCode;
   }
   Stream& response = http.getStream();
+  doc.clear();
   deserializeJson(doc, response);
   repos = doc.as<JsonArray>();
-  Serial.println("data from server: ");
-  for (JsonObject repo : repos) {
-    // Serial.print(" _ ");
-    Serial.println(repo["uid"].as<char* >());
-    // repo =  stoi (repo["uid"],NULL,10);
-    // repo = (int) strtol(repos["uid"], (char **)NULL, 10);
-
-  }
-  Serial.println("END");
-  // return repos;
+  return httpCode;
 }
 
 void readFromEEPROM() {
-
   //EEPROM first and second rows are reserved
-  int c = 9;
-//  if (EEPROM.read(512) == 0xFF)
-//    return;
-Serial.println("EEPROM data : ");
-  for (size_t i = 0; i <30; i++)
+  int c = 8;
+  for (size_t i = 0; i < 30; i++)
   {
     for (size_t j = 0; j < 4 ; j++)
     {
-      Serial.print(EEPROM.read(c));
       cards[i][j] = EEPROM.read(c++);
     }
-    Serial.println();
   }
 }
 
@@ -226,16 +203,28 @@ void nfcSetup() {
 
   Serial.println("Waiting for an ISO14443A card");
 }
-void checkTime() {
-  if (millis() - timenow > 30000 ) {
-    getListFromServer();
-    Serial.println("30 seconds past");
-    timenow = millis();
 
+bool isTimePassed(long long duration){
+  if (millis() - timenow > duration){
+    timenow = millis();
+    return true;
+  }
+  return false;
+}
+
+void updateMembersList() {
+  int result = getListFromServer();
+  if (result == 200)
+  {
+    jsontoarr();
+    saveToEEPROM();
+  } else if (EEPROM.read(512) != 0xFF)
+  {
+    readFromEEPROM();
   }
 }
-void printUidValue(uint8_t uid[] , uint8_t uidLength) {
 
+void printUidValue(uint8_t uid[] , uint8_t uidLength) {
   Serial.println("Found a card!");
   Serial.print("UID Length: "); Serial.print(uidLength, DEC); Serial.println(" bytes");
   Serial.print("UID Value: ");
@@ -245,69 +234,33 @@ void printUidValue(uint8_t uid[] , uint8_t uidLength) {
 
   }
 }
+
 void setup(void) {
   EEPROM.begin(513);
   Serial.begin(115200);
   Serial.println("Hello!");
-  connectToWifi("iPhone", "12345678987");
-  //  // lcd
-  getListFromServer();
-  if (httpCodeGet < 0) {
-    if (EEPROM.read(512) != 0xFF)
-      readFromEEPROM();
-  } else {
-    jsontoarr();
-    saveToEEPROM();
-  }
+  connectToWifi(WIFI_SSID, WIFI_PASS);
+  updateMembersList();
   timenow = millis();
-  Serial.println("EEPROM data : ");
-  int c = 0;
-  for (size_t i = 0; i <30; i++)
-  {
-    for (size_t j = 0; j < 4 ; j++)
-    {
-      Serial.print(EEPROM.read(c));
-      cards[i][j] = EEPROM.read(c++);
-    }
-    Serial.println();
-  }
-  //lcdBegin();
   nfc.begin();
   nfcSetup();
-  uint8_t tempuid[] = {0xFF , 0xA2, 0xFF , 0xFF};
 }
+
 void loop(void) {
   boolean success;
-  boolean accepted = true;
+  boolean accepted;
   uint8_t uid[] = { 0, 0, 0, 0 , 0 , 0 , 0  };
   uint8_t uidLength;
 
   success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, &uid[0], &uidLength);
-  checkTime();
-  if (httpCodeGet < 0) {
 
-  } else {
-    jsontoarr();
-    saveToEEPROM();
+  if(isTimePassed(UPDATE_INTERVAL)) {
+    updateMembersList();
   }
+
   if (success) {
-    printUidValue(uid , uidLength);
-    Serial.println("data in cards");
-    for (int i = 0 ; i < 4 ; i++)
-      Serial.println(cards[0][i]);
-    if (isMember(uid)) {
-      POSTLog(toString(uid) , true);
-    } else {
-    POSTLog(toString(uid) , false);
-    }
+    accepted = isMember(uid);
+    POSTLog(toString(uid) , accepted);
     while (nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, &uid[0], &uidLength)) {}
   }
-
-  else
-  {
-    // PN532 probably timed out waiting for a card
-    Serial.println("Timed out waiting for a card");
-  }
-  
-
 }
