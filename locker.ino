@@ -10,7 +10,9 @@
 #include <ESP8266WiFi.h>
 #include <string.h>
 #include "config.h"
-
+#define buzzerPin D3
+#define lock D4
+#define frequency 2400
 DynamicJsonDocument doc(2048);
 JsonArray repos ;
 unsigned long timenow = 0;
@@ -21,8 +23,24 @@ uint8_t cards[30][4];
 uint8_t temp[4];
 int httpCodeGet = 0;
 HTTPClient http;
+void buzzer( bool accepted) {
+  if (accepted) {
+    tone(buzzerPin , frequency);
+    delay(250);
+    noTone(buzzerPin);
+  } else {
+    tone(buzzerPin , frequency);
+    delay(1000);
+    noTone(buzzerPin);
+  }
+}
+void buzzerAlert() {
 
+}
 void unlock() {
+  digitalWrite(lock , HIGH);
+  delay(5000);
+  digitalWrite(lock , LOW);
 
 }
 
@@ -111,17 +129,17 @@ void POSTLog(const char* uid  , bool accepted ) {
   String output;
   output = " ";
   output += "{\"uid\":\"";
-  
-  for(int i = 0; i < 8; i++){
+
+  for (int i = 0; i < 8; i++) {
     output += uid[i];
   }
   output += "\",\"approved\":";
-  if(accepted){
+  if (accepted) {
     output += "true";
-  }else{
+  } else {
     output += "false";
   }
-  output+= "}";
+  output += "}";
   http.begin(SERVER_ROOT LOG_URL);
   http.addHeader("Content-Type", "application/json");
   int httpCode = http.POST(output);
@@ -204,8 +222,8 @@ void nfcSetup() {
   Serial.println("Waiting for an ISO14443A card");
 }
 
-bool isTimePassed(long long duration){
-  if (millis() - timenow > duration){
+bool isTimePassed(long long duration) {
+  if (millis() - timenow > duration) {
     timenow = millis();
     return true;
   }
@@ -239,6 +257,11 @@ void setup(void) {
   EEPROM.begin(513);
   Serial.begin(115200);
   Serial.println("Hello!");
+  noTone(buzzerPin);
+  pinMode(lock , OUTPUT);
+  digitalWrite(lock , LOW);
+  delay(1000);
+  analogWrite(0, D4);
   connectToWifi(WIFI_SSID, WIFI_PASS);
   updateMembersList();
   timenow = millis();
@@ -254,13 +277,17 @@ void loop(void) {
 
   success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, &uid[0], &uidLength);
 
-  if(isTimePassed(UPDATE_INTERVAL)) {
+  if (isTimePassed(UPDATE_INTERVAL)) {
     updateMembersList();
   }
 
   if (success) {
     accepted = isMember(uid);
     POSTLog(toString(uid) , accepted);
+    buzzer(accepted);
+    if (accepted) {
+      unlock();
+    }
     while (nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, &uid[0], &uidLength)) {}
   }
 }
