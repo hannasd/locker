@@ -3,58 +3,54 @@
 #include <PN532_SPI.h>
 #include <PN532.h>
 #include <EEPROM.h>
-#include <gfxfont.h>
-#include <time.h>
 #include <ArduinoJson.h>
 #include <ESP8266HTTPClient.h>
 #include <ESP8266WiFi.h>
 #include <string.h>
 #include "config.h"
-#define buzzerPin D3
-#define lock D4
-#define frequency 2400
+
 DynamicJsonDocument doc(2048);
-JsonArray repos ;
+JsonArray repos;
 unsigned long timenow = 0;
 PN532_SPI pn532spi(SPI, D2);
 PN532 nfc(pn532spi);
-uint8_t numberOfCards;
 uint8_t cards[30][4];
 uint8_t temp[4];
-int httpCodeGet = 0;
 HTTPClient http;
-void buzzer( bool accepted) {
+
+void buzzer(bool accepted) {
   if (accepted) {
-    tone(buzzerPin , frequency);
+    tone(BUZZER_PIN , BUZZER_FREQ);
     delay(250);
-    noTone(buzzerPin);
+    noTone(BUZZER_PIN);
   } else {
-    tone(buzzerPin , frequency);
+    tone(BUZZER_PIN , BUZZER_FREQ);
     delay(1000);
-    noTone(buzzerPin);
+    noTone(BUZZER_PIN);
   }
 }
-void buzzerAlert() {
 
-}
 void unlock() {
-  digitalWrite(lock , HIGH);
+  digitalWrite(LOCK_PIN , HIGH);
   delay(5000);
-  digitalWrite(lock , LOW);
-
+  digitalWrite(LOCK_PIN , LOW);
 }
 
 void connectToWifi(String networkName, String networkPassword) {
+  int counter = 0;
   WiFi.begin(networkName, networkPassword);
   Serial.print("Connecting");
 
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
+    if (counter++ > WIFI_ATTEMPTS)
+    {
+      Serial.println("\nConnection Failed");
+      return;
+    }
   }
-  Serial.println();
-
-  Serial.print("Connected, IP address: ");
+  Serial.print("\nConnected, IP address: ");
   Serial.println(WiFi.localIP());
 }
 
@@ -254,14 +250,14 @@ void printUidValue(uint8_t uid[] , uint8_t uidLength) {
 }
 
 void setup(void) {
-  EEPROM.begin(513);
+  EEPROM.begin(520);
   Serial.begin(115200);
   Serial.println("Hello!");
-  noTone(buzzerPin);
-  pinMode(lock , OUTPUT);
-  digitalWrite(lock , LOW);
+  pinMode(BUZZER_PIN, OUTPUT);
+  pinMode(LOCK_PIN , OUTPUT);
+  digitalWrite(LOCK_PIN , LOW);
+  digitalWrite(BUZZER_PIN , LOW);
   delay(1000);
-  analogWrite(0, D4);
   connectToWifi(WIFI_SSID, WIFI_PASS);
   updateMembersList();
   timenow = millis();
@@ -283,11 +279,11 @@ void loop(void) {
 
   if (success) {
     accepted = isMember(uid);
-    POSTLog(toString(uid) , accepted);
     buzzer(accepted);
     if (accepted) {
       unlock();
     }
+    POSTLog(toString(uid) , accepted);
     while (nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, &uid[0], &uidLength)) {}
   }
 }
